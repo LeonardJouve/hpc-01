@@ -6,9 +6,6 @@
 #include "json_writer.h"
 #include "output_structs.h"
 
-// TODO offset ~13 CSV ligne 2
-// ecg_remove_dc
-
 int main(int argc, char *argv[])
 {
     if (argc < 3) {

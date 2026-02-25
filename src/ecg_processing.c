@@ -8,6 +8,10 @@
 
 ECG_Context *ecg_create(const ECG_Params *params) {
     ECG_Context *ctx = malloc(sizeof(ECG_Context));
+    if (!ctx) {
+        return NULL;
+    }
+
     ctx->params = *params;
 
     return ctx;
@@ -28,6 +32,12 @@ size_t maximum_index(const double *x, size_t size) {
     return max_index;
 }
 
+void swap(double **x, double **y) {
+    double **tmp = x;
+    *x = *y;
+    *y = *tmp;
+}
+
 ECG_Status ecg_analyze(
     ECG_Context *ctx,
     const double *signal,
@@ -36,57 +46,63 @@ ECG_Status ecg_analyze(
     ECG_Peaks *peaks,
     ECG_Intervals *intervals
 ) {
+    if (!ctx || !signal || !peaks || !intervals) {
+        return ECG_ERR_NULL;
+    }
+
     const int high_frequency = 15;
     const int low_frequency = 5;
     const double window_time = 0.15; // s
+    const size_t window_size = ctx->params.sampling_rate_hz * window_time;
 
-    double *tmp1 = malloc(n_samples * sizeof(double));
-    double *tmp2 = malloc(n_samples * sizeof(double));
+    double *in = malloc(n_samples * sizeof(double));
+    if (!in) {
+        return ECG_ERR_ALLOC;
+    }
 
-    memcpy(tmp1, signal, sizeof(double) * n_samples);
+    double *out = malloc(n_samples * sizeof(double));
+    if (!out) {
+        return ECG_ERR_ALLOC;
+    }
 
-    ecg_remove_dc(tmp1, n_samples);
+    memcpy(in, signal, sizeof(double) * n_samples);
 
-    ecg_apply_gain(tmp1, n_samples, ctx->params.gain);
+    ecg_remove_dc(in, n_samples);
+    ecg_apply_gain(in, n_samples, ctx->params.gain);
+    
+    ecg_moving_average(in, out, n_samples, ctx->params.sampling_rate_hz / high_frequency);
+    swap(&in, &out);
+    
+    ecg_highpass_ma(in, out, n_samples, ctx->params.sampling_rate_hz / low_frequency);
+    swap(&in, &out);
+    
+    ecg_derivative_1(in, out, n_samples);
+    swap(&in, &out);
+    
+    ecg_square(in, out, n_samples);
+    swap(&in, &out);
+    
+    ecg_mwi(in, out, n_samples, window_size);
+    swap(&in, &out);
 
-    ecg_moving_average(tmp1, tmp2, n_samples, ctx->params.sampling_rate_hz / high_frequency);
+    double threashold = out[maximum_index(out, n_samples)] * 0.9;
 
-    ecg_highpass_ma(tmp2, tmp1, n_samples, ctx->params.sampling_rate_hz / low_frequency);
-
-    ecg_derivative_1(tmp1, tmp2, n_samples);
-
-    ecg_square(tmp2, tmp1, n_samples);
-
-    ecg_mwi(tmp1, tmp2, n_samples, ctx->params.sampling_rate_hz * window_time);
-
-    double threashold = tmp2[maximum_index(tmp2, n_samples)] * 0.9;
-
-    double lookup_window_time = 0.2; // s
-    size_t lookup_window_size = ctx->params.sampling_rate_hz * lookup_window_time;
     size_t peakIndex = 0;
-    size_t peakValue = 0;
     bool found = false;
     for (size_t i = 0; i < n_samples; ++i) {
-        double value = tmp2[i];
-        if (value > threashold && (!found || value > peakValue)) {
+        double value = out[i];
+        if (value > threashold && (!found || value > out[peakIndex])) {
             found = true;
             peakIndex = i;
-            peakValue = value;
         } else if (value < threashold && found) {
-            size_t start = (peakIndex > lookup_window_size) ? peakIndex - lookup_window_size : 0;
-            size_t end = peakIndex + lookup_window_size >= n_samples ? n_samples - 1 : peakIndex + lookup_window_size;
+            size_t start = peakIndex > window_size ?
+                peakIndex - window_size :
+                0;
+            size_t end = peakIndex + window_size < n_samples ?
+                peakIndex + window_size :
+                n_samples - 1;
 
-            size_t max_index = start;
-            double max = signal[start];
-
-            for (size_t i = start + 1; i < end; ++i) {
-                if (signal[i] > max) {
-                    max = signal[i];
-                    max_index = i;
-                }
-            }
-
-            max_index = maximum_index(signal + start + 1, end - start);
+            max_index = start + maximum_index(signal + start, end - start);
 
             peaks->R[peaks->R_count++] = max_index;
             found = false;
