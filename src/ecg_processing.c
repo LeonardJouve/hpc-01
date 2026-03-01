@@ -33,9 +33,9 @@ size_t maximum_index(const double *x, size_t size) {
 }
 
 void swap(double **x, double **y) {
-    double **tmp = x;
+    double *tmp = *x;
     *x = *y;
-    *y = *tmp;
+    *y = tmp;
 }
 
 ECG_Status ecg_analyze(
@@ -88,6 +88,7 @@ ECG_Status ecg_analyze(
     double threashold = out[maximum_index(out, n_samples)] * 0.9;
 
     size_t peakIndex = 0;
+    size_t previousPeakIndex = 0;
     bool found = false;
     for (size_t i = 0; i < n_samples; ++i) {
         double value = out[i];
@@ -98,16 +99,22 @@ ECG_Status ecg_analyze(
             size_t start = peakIndex > window_size ?
                 peakIndex - window_size :
                 0;
-            size_t end = peakIndex + window_size < n_samples ?
+            size_t end = (peakIndex + window_size) < n_samples ?
                 peakIndex + window_size :
                 n_samples - 1;
 
-            max_index = start + maximum_index(signal + start, end - start);
+            size_t currentPeakIndex = start + maximum_index(signal + start, end - start);
+            peaks->R[peaks->R_count++] = currentPeakIndex;
+            
+            intervals->RR[intervals->count++] = (double) (currentPeakIndex - previousPeakIndex) / ctx->params.sampling_rate_hz;
 
-            peaks->R[peaks->R_count++] = max_index;
+            previousPeakIndex = currentPeakIndex;
             found = false;
         }
     }
+
+    free(in);
+    free(out);
 
     return ECG_OK;
 }
